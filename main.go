@@ -9,21 +9,32 @@ import (
 	"net/url"
 )
 
+const (
+	listen = "127.0.0.1:3000"
+	serviceUrl = "https://service.local"
+	fallbackUrl = "https://fallback.local"
+)
+
 func main() {
     http.HandleFunc("/", handleRequestAndRedirect)
 
-    if err := http.ListenAndServe("127.0.0.1:3000", nil); err != nil {
+    if err := http.ListenAndServe(listen, nil); err != nil {
         panic(err)
     }
 }
 
 func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
-	url, err := url.Parse("http://127.0.0.1:3001")
+	url, err := url.Parse(serviceUrl)
 	if err != nil {
 		panic(err)
 	}
 	body, _ := ioutil.ReadAll(req.Body)
 	req.Body = ioutil.NopCloser(bytes.NewReader(body))
+
+	req.URL.Host = url.Host
+	req.URL.Scheme = url.Scheme
+	req.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
+	req.Host = url.Host
 
 	proxy := httputil.NewSingleHostReverseProxy(url)
 	proxy.ModifyResponse = catchError
@@ -44,11 +55,16 @@ func fallback(body []byte) func(res http.ResponseWriter, req *http.Request, err 
 		if err == nil {
 			return
 		}
-		url, err := url.Parse("http://127.0.0.1:3002")
+		url, err := url.Parse(fallbackUrl)
 		if err != nil {
 			panic(err)
 		}
 		proxy := httputil.NewSingleHostReverseProxy(url)
+
+		req.URL.Host = url.Host
+		req.URL.Scheme = url.Scheme
+		req.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
+		req.Host = url.Host
 		req.Body = ioutil.NopCloser(bytes.NewReader(localBody))
 		proxy.ServeHTTP(res, req)
 	}
